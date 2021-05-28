@@ -1,0 +1,11 @@
+- [] DI using interfaces
+- [] Enable unit tests
+- [] Ensure context exists
+- [] Address TODOs
+  - [] config
+  - [] async sms/email 
+- [] Load DB once?
+- [] Ensure safe concurrent access for DB?
+- [] Logging
+- [] Update README
+- [] DB credentails as env vars

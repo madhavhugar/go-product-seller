@@ -3,6 +3,7 @@ package product
 import (
 	"coding-challenge-go/pkg/api/seller"
 	"encoding/json"
+	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
@@ -15,16 +16,17 @@ const (
 
 func NewController(repository *repository, sellerRepository *seller.Repository, sellerEmailProvider *seller.EmailProvider) *controller {
 	return &controller{
-		repository: repository,
-		sellerRepository: sellerRepository,
+		repository:          repository,
+		sellerRepository:    sellerRepository,
 		sellerEmailProvider: sellerEmailProvider,
 	}
 }
 
 type controller struct {
-	repository *repository
-	sellerRepository *seller.Repository
+	repository          *repository
+	sellerRepository    *seller.Repository
 	sellerEmailProvider *seller.EmailProvider
+	sellerSmsProvider   *seller.SmsProvider
 }
 
 func (pc *controller) List(c *gin.Context) {
@@ -37,7 +39,7 @@ func (pc *controller) List(c *gin.Context) {
 		return
 	}
 
-	products, err  := pc.repository.list((request.Page - 1) * LIST_PAGE_SIZE, LIST_PAGE_SIZE)
+	products, err := pc.repository.list((request.Page-1)*LIST_PAGE_SIZE, LIST_PAGE_SIZE)
 
 	if err != nil {
 		log.Error().Err(err).Msg("Fail to query product list")
@@ -46,6 +48,53 @@ func (pc *controller) List(c *gin.Context) {
 	}
 
 	productsJson, err := json.Marshal(products)
+
+	if err != nil {
+		log.Error().Err(err).Msg("Fail to marshal products")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Fail to marshal products"})
+		return
+	}
+
+	c.Data(http.StatusOK, "application/json; charset=utf-8", productsJson)
+}
+
+func (pc *controller) ListWithSellerLinks(c *gin.Context) {
+	request := &struct {
+		Page int `form:"page,default=1"`
+	}{}
+
+	if err := c.ShouldBindQuery(request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	products, err := pc.repository.list((request.Page-1)*LIST_PAGE_SIZE, LIST_PAGE_SIZE)
+
+	if err != nil {
+		log.Error().Err(err).Msg("Fail to query product list")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Fail to query product list"})
+		return
+	}
+
+	var productsWithLinks []productWithSellerLinks
+	for _, product := range products {
+		productsWithLinks = append(productsWithLinks, productWithSellerLinks{
+			ProductID: product.ProductID,
+			UUID:      product.UUID,
+			Name:      product.Name,
+			Brand:     product.Brand,
+			Stock:     product.Stock,
+			Seller: sellerLinks{
+				SellerID: product.SellerUUID,
+				Links: links{
+					// TODO: replace with global variables
+					Self: self{Href: fmt.Sprintf("%s/%s/sellers/%s", "hostname", "version", product.SellerUUID)},
+				},
+			},
+		})
+	}
+
+	productsJson, err := json.Marshal(productsWithLinks)
 
 	if err != nil {
 		log.Error().Err(err).Msg("Fail to marshal products")
@@ -85,11 +134,55 @@ func (pc *controller) Get(c *gin.Context) {
 	c.Data(http.StatusOK, "application/json; charset=utf-8", productJson)
 }
 
+func (pc *controller) GetWithSellerLinks(c *gin.Context) {
+	request := &struct {
+		UUID string `form:"id" binding:"required"`
+	}{}
+
+	if err := c.ShouldBindQuery(request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	product, err := pc.repository.findByUUID(request.UUID)
+
+	if err != nil {
+		log.Error().Err(err).Msg("Fail to query product by uuid")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Fail to query product by uuid"})
+		return
+	}
+
+	productMeta := productWithSellerLinks{
+		ProductID: product.ProductID,
+		UUID:      product.UUID,
+		Name:      product.Name,
+		Brand:     product.Brand,
+		Stock:     product.Stock,
+		Seller: sellerLinks{
+			SellerID: product.SellerUUID,
+			Links: links{
+				// TODO: replace with global variables
+				Self: self{Href: fmt.Sprintf("%s/%s/sellers/%s", "hostname", "version", product.SellerUUID)},
+			},
+		},
+	}
+
+	productJson, err := json.Marshal(productMeta)
+
+	if err != nil {
+		log.Error().Err(err).Msg("Fail to marshal product")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Fail to marshal product"})
+		return
+	}
+
+	c.Data(http.StatusOK, "application/json; charset=utf-8", productJson)
+}
+
 func (pc *controller) Post(c *gin.Context) {
 	request := &struct {
-		Name string `form:"name"`
-		Brand string `form:"brand"`
-		Stock int `form:"stock"`
+		Name   string `form:"name"`
+		Brand  string `form:"brand"`
+		Stock  int    `form:"stock"`
 		Seller string `form:"seller"`
 	}{}
 
@@ -112,11 +205,11 @@ func (pc *controller) Post(c *gin.Context) {
 	}
 
 	product := &product{
-		UUID:      uuid.New().String(),
-		Name:      request.Name,
-		Brand:     request.Brand,
-		Stock:     request.Stock,
-		SellerUUID:    seller.UUID,
+		UUID:       uuid.New().String(),
+		Name:       request.Name,
+		Brand:      request.Brand,
+		Stock:      request.Stock,
+		SellerUUID: seller.UUID,
 	}
 
 	err = pc.repository.insert(product)
@@ -157,9 +250,9 @@ func (pc *controller) Put(c *gin.Context) {
 	}
 
 	request := &struct {
-		Name string `form:"name"`
+		Name  string `form:"name"`
 		Brand string `form:"brand"`
-		Stock int `form:"stock"`
+		Stock int    `form:"stock"`
 	}{}
 
 	if err := c.ShouldBindJSON(request); err != nil {
@@ -181,6 +274,7 @@ func (pc *controller) Put(c *gin.Context) {
 		return
 	}
 
+	// TODO: identify an async way to handle notifications
 	if oldStock != product.Stock {
 		seller, err := pc.sellerRepository.FindByUUID(product.SellerUUID)
 
@@ -189,8 +283,11 @@ func (pc *controller) Put(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Fail to query seller by UUID"})
 			return
 		}
-
-		pc.sellerEmailProvider.StockChanged(oldStock, product.Stock, seller.Email)
+		// TODO: use configuration here to send Sms and/or Email
+		notification := pc.sellerEmailProvider.StockChanged(oldStock, product.Stock, *seller, product.Name)
+		fmt.Println(notification)
+		notification = pc.sellerSmsProvider.StockChanged(oldStock, product.Stock, *seller, product.Name)
+		fmt.Println(notification)
 	}
 
 	jsonData, err := json.Marshal(product)
