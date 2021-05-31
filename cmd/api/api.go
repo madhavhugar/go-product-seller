@@ -2,25 +2,22 @@ package main
 
 import (
 	"coding-challenge-go/pkg/api"
-	"os"
+	database "coding-challenge-go/pkg/db"
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"database/sql"
-	_ "github.com/go-sql-driver/mysql")
+	"os"
+)
 
 func main() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMs
 
-	db, err := sql.Open("mysql", "user:password@tcp(db:3306)/product")
+	// TODO: make db on error exit more explicit
+	dbNew := database.InitConnection("mysql", "user:password@tcp(db:3306)/product")
 
-	if err != nil {
-		log.Error().Err(err).Msg("Fail to create server")
-		return
-	}
+	defer dbNew.Close()
 
-	defer db.Close()
-
-	engine, err := api.CreateAPIEngine(db)
+	engine, err := api.CreateAPIEngine(dbNew)
 
 	if err != nil {
 		log.Error().Err(err).Msg("Fail to create server")
