@@ -1,16 +1,25 @@
 package seller
 
-import "fmt"
+import (
+	"coding-challenge-go/pkg/model"
+	"fmt"
+)
 
-type Notifier interface {
-	StockChanged(oldStock int, newStock int, seller Seller, productName string) string
+// SmsNotifier provides functionality to notify seller via SMS
+type SmsNotifier interface {
+	StockChanged(oldStock int, newStock int, seller model.Seller, productName string) string
 }
 
 type SmsProvider struct{}
 
-func (sp *SmsProvider) StockChanged(oldStock int, newStock int, seller Seller, productName string) string {
+func NewSmsProvider() SmsNotifier {
+	return &SmsProvider{}
+}
+
+// StockChanged provides an SMS template on stock change
+func (sp *SmsProvider) StockChanged(oldStock int, newStock int, seller model.Seller, productName string) string {
 	return fmt.Sprintf(
-		"SMS Warning set to {%s} (Phone: {%s}): {%s} Product stock changed from %d to %d",
+		"SMS Warning sent to {%d} (Phone: {%s}): {%s} Product stock changed from %d to %d",
 		seller.SellerID,
 		seller.Phone,
 		productName,
@@ -18,18 +27,22 @@ func (sp *SmsProvider) StockChanged(oldStock int, newStock int, seller Seller, p
 		newStock)
 }
 
-func NewEmailProvider() *EmailProvider {
-	return &EmailProvider{}
+// EmailNotifier provides functionality to notify seller via Email
+type EmailNotifier interface {
+	StockChanged(oldStock int, newStock int, email string) string
 }
 
 type EmailProvider struct{}
 
-func (ep *EmailProvider) StockChanged(oldStock int, newStock int, seller Seller, productName string) string {
+func NewEmailProvider() EmailNotifier {
+	return &EmailProvider{}
+}
+
+// StockChanged provides an Email template on stock change
+func (ep *EmailProvider) StockChanged(oldStock int, newStock int, email string) string {
 	return fmt.Sprintf(
-		"SMS Warning set to {%s} (Phone: {%s}): {%s} Product stock changed from %d to %d",
-		seller.SellerID,
-		seller.Phone,
-		productName,
+		"Email Warning sent to (Email: {%s}): Product stock changed from %d to %d",
+		email,
 		oldStock,
 		newStock)
 }

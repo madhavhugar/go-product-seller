@@ -1,24 +1,31 @@
 package seller
 
 import (
+	"coding-challenge-go/pkg/store"
 	"encoding/json"
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog/log"
 	"net/http"
 )
 
-func NewController(repository *Repository) *controller {
+// API provides the seller APIs
+type API interface {
+	List(c *gin.Context)
+	ListTopSellersByProductCount(c *gin.Context)
+}
+
+func NewController(sellerStore store.Seller) API {
 	return &controller{
-		repository: repository,
+		sellerStore: sellerStore,
 	}
 }
 
 type controller struct {
-	repository *Repository
+	sellerStore store.Seller
 }
 
 func (pc *controller) List(c *gin.Context) {
-	sellers, err := pc.repository.list()
+	sellers, err := pc.sellerStore.List()
 
 	if err != nil {
 		log.Error().Err(err).Msg("Fail to query seller list")
@@ -38,7 +45,7 @@ func (pc *controller) List(c *gin.Context) {
 }
 
 func (pc *controller) ListTopSellersByProductCount(c *gin.Context) {
-	sellers, err := pc.repository.listTopSellersByProductCount()
+	sellers, err := pc.sellerStore.ListTopSellersByProductCount()
 
 	if err != nil {
 		log.Error().Err(err).Msg("Fail to query top sellers list")
