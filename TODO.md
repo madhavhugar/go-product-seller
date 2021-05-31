@@ -1,11 +1,13 @@
-- [] DI using interfaces
-- [] Enable unit tests
-- [] Ensure context exists
-- [] Address TODOs
-  - [] config
-  - [] async sms/email 
-- [] Load DB once?
-- [] Ensure safe concurrent access for DB?
-- [] Logging
-- [] Update README
+- [x] DI using interfaces
+- [x] Enable unit tests
+- [x] Ensure context exists
+- [x] config
+- [] async sms/email
+- [x] Load DB once?
+- [x] Logging
+- [x] Update README
 - [] DB credentails as env vars
+- [x] add comments
+- [x] remove duplication in v1 and v2 endpoints
+- [] create a pool of connections for DB
+- [] Ensure safe concurrent access for DB?
