@@ -88,6 +88,10 @@ Currently, V1 Product object in API responses has the following structure:
 - V2 Product objects sent in requests(POST and PUT actions) should remain the same as in V1.
 - API V1 should NOT be changed for end customer (applications that implement API V1 should never break).
 
+**To test:** 
+
+`curl --location --request GET 'http://localhost:8080/api/v2/product?id=26c3db22-be0e-11eb-87c9-0242ac130002'`
+
 ### Task 2.
 
 **Current behaviour:**
@@ -104,8 +108,24 @@ What type of notifications should be sent to seller SHOULD be defined as an appl
 SMS Warning sent to {seller_UUID} (Phone: {seller_Phone}): {Product_name} Product stock changed
 ```
 
+**To test:**
+
+```
+curl --location --request PUT 'http://localhost:8080/api/v2/product?id=26c3db22-be0e-11eb-87c9-0242ac130002' \
+--header 'Content-Type: application/json' \
+--data-raw '{
+    "name": "Raja",
+    "brand": "RJ",
+    "stock": 99
+}'
+```
+
 ### Task 3
 
 **Behaviour to implement:**
 - API V2 should contain ``/api/v2/sellers/top10`` GET Endpoint.
 - This endpoint should return array of maximum 10 sellers ordered by count of products they have for sale (count of entries in product table) from the largest to the smallest number.
+
+**To test:**
+
+`curl --location --request GET 'http://localhost:8080/api/v2/sellers/top10'`
