@@ -2,6 +2,9 @@ package product
 
 import (
 	"coding-challenge-go/pkg/api/seller"
+	"coding-challenge-go/pkg/config"
+	"coding-challenge-go/pkg/model"
+	"coding-challenge-go/pkg/store"
 	"encoding/json"
 	"fmt"
 	"github.com/gin-gonic/gin"
@@ -12,35 +15,69 @@ import (
 
 const (
 	LIST_PAGE_SIZE = 10
+	// TODO: move to init func
+	DomainName = "http://localhost:8080"
+	APIv1      = "api/v1"
+	APIv2      = "api/v2"
 )
 
-func NewController(repository *repository, sellerRepository *seller.Repository, sellerEmailProvider *seller.EmailProvider) *controller {
+// API provides the product APIs
+type API interface {
+	Get(c *gin.Context)
+	GetWithSellerLinks(c *gin.Context)
+	List(c *gin.Context)
+	ListWithSellerLinks(c *gin.Context)
+	Post(c *gin.Context)
+	Put(c *config.GinContext)
+	Delete(c *gin.Context)
+}
+
+func NewController(
+	productStore store.Product,
+	sellerStore store.Seller,
+	sellerEmailProvider seller.EmailNotifier,
+	sellerSmsProvider seller.SmsNotifier) API {
 	return &controller{
-		repository:          repository,
-		sellerRepository:    sellerRepository,
+		productStore:        productStore,
+		sellerStore:         sellerStore,
 		sellerEmailProvider: sellerEmailProvider,
+		sellerSmsProvider:   sellerSmsProvider,
 	}
 }
 
 type controller struct {
-	repository          *repository
-	sellerRepository    *seller.Repository
-	sellerEmailProvider *seller.EmailProvider
-	sellerSmsProvider   *seller.SmsProvider
+	productStore        store.Product
+	sellerStore         store.Seller
+	sellerEmailProvider seller.EmailNotifier
+	sellerSmsProvider   seller.SmsNotifier
 }
 
-func (pc *controller) List(c *gin.Context) {
+func sellerLink(sellerUUID string) string {
+	return fmt.Sprintf("%s/%s/sellers/%s", DomainName, APIv2, sellerUUID)
+}
+
+func (pc *controller) list(c *gin.Context) ([]*model.Product, error) {
 	request := &struct {
 		Page int `form:"page,default=1"`
 	}{}
 
 	if err := c.ShouldBindQuery(request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+		log.Error().Err(err).Msg("Fail to extract id from request")
+		return nil, err
 	}
 
-	products, err := pc.repository.list((request.Page-1)*LIST_PAGE_SIZE, LIST_PAGE_SIZE)
+	products, err := pc.productStore.List((request.Page-1)*LIST_PAGE_SIZE, LIST_PAGE_SIZE)
 
+	if err != nil {
+		log.Error().Err(err).Msg("Fail to query product list")
+		return nil, err
+	}
+
+	return products, nil
+}
+
+func (pc *controller) List(c *gin.Context) {
+	products, err := pc.list(c)
 	if err != nil {
 		log.Error().Err(err).Msg("Fail to query product list")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Fail to query product list"})
@@ -59,36 +96,27 @@ func (pc *controller) List(c *gin.Context) {
 }
 
 func (pc *controller) ListWithSellerLinks(c *gin.Context) {
-	request := &struct {
-		Page int `form:"page,default=1"`
-	}{}
-
-	if err := c.ShouldBindQuery(request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	products, err := pc.repository.list((request.Page-1)*LIST_PAGE_SIZE, LIST_PAGE_SIZE)
-
+	products, err := pc.list(c)
 	if err != nil {
 		log.Error().Err(err).Msg("Fail to query product list")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Fail to query product list"})
 		return
 	}
 
-	var productsWithLinks []productWithSellerLinks
-	for _, product := range products {
-		productsWithLinks = append(productsWithLinks, productWithSellerLinks{
-			ProductID: product.ProductID,
-			UUID:      product.UUID,
-			Name:      product.Name,
-			Brand:     product.Brand,
-			Stock:     product.Stock,
-			Seller: sellerLinks{
-				SellerID: product.SellerUUID,
-				Links: links{
-					// TODO: replace with global variables
-					Self: self{Href: fmt.Sprintf("%s/%s/sellers/%s", "hostname", "version", product.SellerUUID)},
+	var productsWithLinks []model.ProductWithSellerLinks
+	for _, p := range products {
+		productsWithLinks = append(productsWithLinks, model.ProductWithSellerLinks{
+			Product: model.Product{
+				ProductID: p.ProductID,
+				UUID:      p.UUID,
+				Name:      p.Name,
+				Brand:     p.Brand,
+				Stock:     p.Stock,
+			},
+			Seller: model.SellerLinks{
+				SellerID: p.SellerUUID,
+				Links: model.Links{
+					Self: model.Self{Href: sellerLink(p.SellerUUID)},
 				},
 			},
 		})
@@ -105,18 +133,26 @@ func (pc *controller) ListWithSellerLinks(c *gin.Context) {
 	c.Data(http.StatusOK, "application/json; charset=utf-8", productsJson)
 }
 
-func (pc *controller) Get(c *gin.Context) {
+func (pc *controller) get(c *gin.Context) (*model.Product, error) {
 	request := &struct {
 		UUID string `form:"id" binding:"required"`
 	}{}
 
 	if err := c.ShouldBindQuery(request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+		return nil, err
 	}
 
-	product, err := pc.repository.findByUUID(request.UUID)
+	p, err := pc.productStore.FindByUUID(request.UUID)
+	if err != nil {
+		log.Error().Err(err).Msg("Fail to query product")
+		return nil, err
+	}
 
+	return p, nil
+}
+
+func (pc *controller) Get(c *gin.Context) {
+	product, err := pc.get(c)
 	if err != nil {
 		log.Error().Err(err).Msg("Fail to query product by uuid")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Fail to query product by uuid"})
@@ -135,34 +171,25 @@ func (pc *controller) Get(c *gin.Context) {
 }
 
 func (pc *controller) GetWithSellerLinks(c *gin.Context) {
-	request := &struct {
-		UUID string `form:"id" binding:"required"`
-	}{}
-
-	if err := c.ShouldBindQuery(request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	product, err := pc.repository.findByUUID(request.UUID)
-
+	p, err := pc.get(c)
 	if err != nil {
 		log.Error().Err(err).Msg("Fail to query product by uuid")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Fail to query product by uuid"})
 		return
 	}
 
-	productMeta := productWithSellerLinks{
-		ProductID: product.ProductID,
-		UUID:      product.UUID,
-		Name:      product.Name,
-		Brand:     product.Brand,
-		Stock:     product.Stock,
-		Seller: sellerLinks{
-			SellerID: product.SellerUUID,
-			Links: links{
-				// TODO: replace with global variables
-				Self: self{Href: fmt.Sprintf("%s/%s/sellers/%s", "hostname", "version", product.SellerUUID)},
+	productMeta := model.ProductWithSellerLinks{
+		Product: model.Product{
+			ProductID: p.ProductID,
+			UUID:      p.UUID,
+			Name:      p.Name,
+			Brand:     p.Brand,
+			Stock:     p.Stock,
+		},
+		Seller: model.SellerLinks{
+			SellerID: p.SellerUUID,
+			Links: model.Links{
+				Self: model.Self{Href: sellerLink(p.SellerUUID)},
 			},
 		},
 	}
@@ -191,7 +218,7 @@ func (pc *controller) Post(c *gin.Context) {
 		return
 	}
 
-	seller, err := pc.sellerRepository.FindByUUID(request.Seller)
+	seller, err := pc.sellerStore.FindByUUID(request.Seller)
 
 	if err != nil {
 		log.Error().Err(err).Msg("Fail to query seller by UUID")
@@ -204,7 +231,7 @@ func (pc *controller) Post(c *gin.Context) {
 		return
 	}
 
-	product := &product{
+	product := &model.Product{
 		UUID:       uuid.New().String(),
 		Name:       request.Name,
 		Brand:      request.Brand,
@@ -212,7 +239,7 @@ func (pc *controller) Post(c *gin.Context) {
 		SellerUUID: seller.UUID,
 	}
 
-	err = pc.repository.insert(product)
+	err = pc.productStore.Insert(product)
 
 	if err != nil {
 		log.Error().Err(err).Msg("Fail to insert product")
@@ -231,7 +258,30 @@ func (pc *controller) Post(c *gin.Context) {
 	c.Data(http.StatusOK, "application/json; charset=utf-8", jsonData)
 }
 
-func (pc *controller) Put(c *gin.Context) {
+func (pc *controller) notifySeller(product model.Product, config config.Config, oldStock int) error {
+	if !config.NotifySellerViaEmail && !config.NotifySellerViaSms {
+		return nil
+	}
+
+	s, err := pc.sellerStore.FindByUUID(product.SellerUUID)
+	if err != nil {
+		log.Error().Err(err).Msg("Fail to query seller by UUID")
+		return err
+	}
+
+	if config.NotifySellerViaSms {
+		notification := pc.sellerSmsProvider.StockChanged(oldStock, product.Stock, *s, product.Name)
+		log.Info().Msg(notification)
+	}
+	if config.NotifySellerViaEmail {
+		notification := pc.sellerEmailProvider.StockChanged(oldStock, product.Stock, s.Email)
+		log.Info().Msg(notification)
+	}
+
+	return nil
+}
+
+func (pc *controller) Put(c *config.GinContext) {
 	queryRequest := &struct {
 		UUID string `form:"id" binding:"required"`
 	}{}
@@ -241,7 +291,7 @@ func (pc *controller) Put(c *gin.Context) {
 		return
 	}
 
-	product, err := pc.repository.findByUUID(queryRequest.UUID)
+	product, err := pc.productStore.FindByUUID(queryRequest.UUID)
 
 	if err != nil {
 		log.Error().Err(err).Msg("Fail to query product by uuid")
@@ -266,28 +316,20 @@ func (pc *controller) Put(c *gin.Context) {
 	product.Brand = request.Brand
 	product.Stock = request.Stock
 
-	err = pc.repository.update(product)
+	err = pc.productStore.Update(product)
 
 	if err != nil {
-		log.Error().Err(err).Msg("Fail to insert product")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Fail to insert product"})
+		log.Error().Err(err).Msg("Fail to update product")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Fail to update product"})
 		return
 	}
 
 	// TODO: identify an async way to handle notifications
 	if oldStock != product.Stock {
-		seller, err := pc.sellerRepository.FindByUUID(product.SellerUUID)
-
+		err = pc.notifySeller(*product, c.Config, oldStock)
 		if err != nil {
-			log.Error().Err(err).Msg("Fail to query seller by UUID")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Fail to query seller by UUID"})
-			return
+			log.Error().Err(err).Msg("Failed to notify seller on stock update")
 		}
-		// TODO: use configuration here to send Sms and/or Email
-		notification := pc.sellerEmailProvider.StockChanged(oldStock, product.Stock, *seller, product.Name)
-		fmt.Println(notification)
-		notification = pc.sellerSmsProvider.StockChanged(oldStock, product.Stock, *seller, product.Name)
-		fmt.Println(notification)
 	}
 
 	jsonData, err := json.Marshal(product)
@@ -311,7 +353,7 @@ func (pc *controller) Delete(c *gin.Context) {
 		return
 	}
 
-	product, err := pc.repository.findByUUID(request.UUID)
+	product, err := pc.productStore.FindByUUID(request.UUID)
 
 	if err != nil {
 		log.Error().Err(err).Msg("Fail to query product by uuid")
@@ -324,7 +366,7 @@ func (pc *controller) Delete(c *gin.Context) {
 		return
 	}
 
-	err = pc.repository.delete(product)
+	err = pc.productStore.Delete(product)
 
 	if err != nil {
 		log.Error().Err(err).Msg("Fail to delete product")
